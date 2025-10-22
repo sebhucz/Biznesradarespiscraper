@@ -1,6 +1,7 @@
 name: BiznesRadar News Scraper
 
 on:
+  workflow_dispatch:      # 🔹 pozwala uruchamiać akcję ręcznie z poziomu GitHub UI
   push:
     branches:
       - main
