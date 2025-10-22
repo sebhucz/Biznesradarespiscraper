@@ -23,7 +23,7 @@ def parse_date(date_str: str):
 
 def get_report_text(link: str) -> str:
     """
-    Pobiera pełną treść raportu z https://espiebi.pap.pl/node/xxxx.
+    Pobiera właściwą treść raportu (część PL) z espiebi.pap.pl.
     """
     match = re.search(r"/node/(\d+)", link)
     if not match:
@@ -32,17 +32,18 @@ def get_report_text(link: str) -> str:
     report_url = f"https://espiebi.pap.pl/node/{node_id}"
 
     try:
-        resp = requests.get(report_url, headers=HEADERS, timeout=15)
+        resp = requests.get(report_url, headers=HEADERS, timeout=20)
         resp.raise_for_status()
     except Exception as e:
         return f"[Błąd pobierania raportu {report_url}: {e}]"
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    td = soup.find("td", colspan="11")
+
+    # Precyzyjny selektor wg analizy struktury HTML raportów
+    td = soup.select_one(".field-body-xml-content .arkusz:first-of-type td[colspan]")
     if not td:
         return "[Nie znaleziono treści raportu]"
-    
-    # Tekst z <br> i czyszczenie
+
     text = td.get_text(separator="\n", strip=True)
     return text
 
@@ -53,7 +54,7 @@ def scrape_company(symbol: str) -> list[str]:
     print(f"\n🔍 Sprawdzam spółkę: {symbol} ({url})")
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
     except Exception as e:
         return [f"Błąd pobierania strony: {e}"]
@@ -95,7 +96,7 @@ def scrape_company(symbol: str) -> list[str]:
             f"Treść raportu:\n{report_text}\n"
         )
         results.append(entry)
-        sleep(1.0)  # mała przerwa między raportami
+        sleep(1.0)  # pauza między raportami, by nie obciążać serwera
 
     if not results:
         return ["Brak komunikatów ESPI/EBI od 1 lipca 2025."]
