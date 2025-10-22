@@ -9,43 +9,27 @@ INPUT_FILE = "NCFOCUSNAZWY.txt"
 OUTPUT_DIR = "wyniki"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "wiadomosci_spolek.txt")
 
-# tylko wiadomości po tej dacie
 CUTOFF_DATE = datetime(2025, 7, 1)
-
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-def parse_date(date_str: str) -> datetime | None:
-    """Konwertuje datę z formatu np. '2025-08-18 09:44:22' na datetime"""
+def parse_date(date_str: str):
+    """Konwertuje tekst daty do obiektu datetime."""
     try:
         return datetime.strptime(date_str.strip(), "%Y-%m-%d %H:%M:%S")
     except Exception:
         return None
 
 
-def get_article_content(link: str) -> str:
-    """Pobiera treść artykułu z linka (pełny raport ESPI/EBI)."""
-    try:
-        resp = requests.get(link, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        paragraphs = soup.find_all("p")
-        text = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-        return text if text else "[Brak treści raportu]"
-    except Exception as e:
-        return f"[Błąd pobierania treści: {e}]"
-
-
 def scrape_company(symbol: str) -> list[str]:
-    """Pobiera wiadomości dla jednej spółki."""
+    """Pobiera krótkie info o wiadomościach (tytuł, data, link)."""
     url = BASE_URL.format(symbol)
-    print(f"\n🔍 Przetwarzanie spółki: {symbol} ({url})")
+    print(f"\n🔍 Sprawdzam spółkę: {symbol} ({url})")
 
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = requests.get(url, headers=HEADERS, timeout=10)
         resp.raise_for_status()
     except Exception as e:
-        return [f"Błąd pobierania strony {url}: {e}"]
+        return [f"Błąd pobierania strony: {e}"]
 
     soup = BeautifulSoup(resp.text, "html.parser")
     records = soup.find_all("div", class_="record")
@@ -56,12 +40,12 @@ def scrape_company(symbol: str) -> list[str]:
         if not footer:
             continue
 
-        # Sprawdzamy źródło (ESPI/EBI)
-        author_tag = footer.find("a", class_="record-author")
-        if not author_tag or "ESPI" not in author_tag.text and "EBI" not in author_tag.text:
+        # Sprawdzamy, czy to komunikat ESPI/EBI
+        author = footer.find("a", class_="record-author")
+        if not author or ("ESPI" not in author.text and "EBI" not in author.text):
             continue
 
-        # Pobieramy datę
+        # Data
         date_tag = footer.find("span", class_="record-date")
         if not date_tag:
             continue
@@ -77,37 +61,33 @@ def scrape_company(symbol: str) -> list[str]:
         title = link_tag.text.strip() if link_tag else "[Brak tytułu]"
         link = link_tag["href"] if link_tag and "href" in link_tag.attrs else "[Brak linka]"
 
-        # Treść raportu
-        content = get_article_content(link)
+        results.append(f"- {title}\n  Data: {date.strftime('%Y-%m-%d %H:%M:%S')}\n  Link: {link}")
 
-        entry = (
-            f"Tytuł: {title}\n"
-            f"Data: {date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Link: {link}\n"
-            f"Treść:\n{content}\n"
-        )
-        results.append(entry)
-        sleep(1)  # niewielka pauza między zapytaniami
+    if not results:
+        return ["Brak komunikatów ESPI/EBI od 1 lipca 2025."]
 
-    return results if results else [f"Brak aktualnych komunikatów ESPI/EBI od 1 lipca 2025."]
+    return results
 
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
         companies = [line.strip() for line in f if line.strip()]
 
     all_results = []
+    print(f"📄 Znaleziono {len(companies)} spółek do sprawdzenia...")
+
     for symbol in companies:
         company_data = scrape_company(symbol)
-        block = f"\n=== {symbol} ===\n" + "\n\n".join(company_data)
+        block = f"\n=== {symbol} ===\n" + "\n".join(company_data)
         all_results.append(block)
-        sleep(1.5)
+        sleep(0.5)  # krótka pauza, by nie obciążać serwera
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n\n".join(all_results))
 
-    print(f"\n✅ Zapisano wyniki do: {OUTPUT_FILE}")
+    print(f"\n✅ Zapisano wyniki do pliku: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
