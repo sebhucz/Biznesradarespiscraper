@@ -14,7 +14,7 @@ CUTOFF_DATE = datetime(2025, 7, 1)
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def parse_date(date_str: str):
-    """Konwertuje tekst daty do datetime."""
+    """Konwertuje tekst daty na datetime."""
     try:
         return datetime.strptime(date_str.strip(), "%Y-%m-%d %H:%M:%S")
     except Exception:
@@ -23,7 +23,11 @@ def parse_date(date_str: str):
 
 def get_report_text(link: str) -> str:
     """
-    Pobiera właściwą treść raportu (część PL) z espiebi.pap.pl.
+    Pobiera właściwą treść raportu z espiebi.pap.pl.
+    Logika oparta na strukturze HTML:
+    - Znajduje <td> zawierające tekst 'Treść raportu:'
+    - Przechodzi do następnego <tr>
+    - Pobiera <td> z atrybutem colspan (np. colspan=10/11)
     """
     match = re.search(r"/node/(\d+)", link)
     if not match:
@@ -39,13 +43,24 @@ def get_report_text(link: str) -> str:
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Precyzyjny selektor wg analizy struktury HTML raportów
-    td = soup.select_one(".field-body-xml-content .arkusz:first-of-type td[colspan]")
-    if not td:
-        return "[Nie znaleziono treści raportu]"
+    # Znajdź komórkę z etykietą 'Treść raportu:'
+    label_td = soup.find("td", string=lambda t: t and "Treść raportu" in t)
+    if not label_td:
+        return "[Nie znaleziono etykiety 'Treść raportu']"
 
-    text = td.get_text(separator="\n", strip=True)
-    return text
+    # Znajdź następny wiersz <tr> po etykiecie
+    next_tr = label_td.find_parent("tr").find_next_sibling("tr")
+    if not next_tr:
+        return "[Nie znaleziono wiersza z treścią raportu]"
+
+    # Znajdź komórkę z atrybutem colspan (zawierającą właściwą treść)
+    content_td = next_tr.find("td", attrs={"colspan": True})
+    if not content_td:
+        return "[Nie znaleziono komórki z treścią raportu]"
+
+    # Pobierz tekst (zachowując nowe linie z <br>)
+    text = content_td.get_text(separator="\n", strip=True)
+    return text or "[Brak treści w raporcie]"
 
 
 def scrape_company(symbol: str) -> list[str]:
@@ -96,7 +111,7 @@ def scrape_company(symbol: str) -> list[str]:
             f"Treść raportu:\n{report_text}\n"
         )
         results.append(entry)
-        sleep(1.0)  # pauza między raportami, by nie obciążać serwera
+        sleep(1.0)  # pauza między raportami, by nie przeciążać serwera
 
     if not results:
         return ["Brak komunikatów ESPI/EBI od 1 lipca 2025."]
