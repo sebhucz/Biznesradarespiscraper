@@ -14,7 +14,7 @@ CUTOFF_DATE = datetime(2025, 7, 1)
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def parse_date(date_str: str):
-    """Konwertuje tekst daty na datetime."""
+    """Konwertuje tekst daty do datetime."""
     try:
         return datetime.strptime(date_str.strip(), "%Y-%m-%d %H:%M:%S")
     except Exception:
@@ -24,10 +24,8 @@ def parse_date(date_str: str):
 def get_report_text(link: str) -> str:
     """
     Pobiera właściwą treść raportu z espiebi.pap.pl.
-    Logika oparta na strukturze HTML:
-    - Znajduje <td> zawierające tekst 'Treść raportu:'
-    - Przechodzi do następnego <tr>
-    - Pobiera <td> z atrybutem colspan (np. colspan=10/11)
+    Działa niezależnie od tego, czy 'Treść raportu:' występuje w <b>, <p> lub zagnieżdżonej tabeli,
+    oraz pomija puste wiersze między etykietą a faktyczną treścią.
     """
     match = re.search(r"/node/(\d+)", link)
     if not match:
@@ -36,29 +34,39 @@ def get_report_text(link: str) -> str:
     report_url = f"https://espiebi.pap.pl/node/{node_id}"
 
     try:
-        resp = requests.get(report_url, headers=HEADERS, timeout=20)
+        resp = requests.get(report_url, headers=HEADERS, timeout=25)
         resp.raise_for_status()
     except Exception as e:
         return f"[Błąd pobierania raportu {report_url}: {e}]"
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # Znajdź komórkę z etykietą 'Treść raportu:'
+    # Szukamy <td> zawierającego tekst "Treść raportu" (również wewnątrz <b>, <p>, <span>)
     label_td = soup.find("td", string=lambda t: t and "Treść raportu" in t)
+    if not label_td:
+        label_td = soup.find("td", lambda t: t and "Treść raportu" in t.get_text())
+
     if not label_td:
         return "[Nie znaleziono etykiety 'Treść raportu']"
 
-    # Znajdź następny wiersz <tr> po etykiecie
-    next_tr = label_td.find_parent("tr").find_next_sibling("tr")
-    if not next_tr:
-        return "[Nie znaleziono wiersza z treścią raportu]"
+    # Przechodzimy do kolejnych wierszy aż znajdziemy <td colspan=...> z treścią
+    tr = label_td.find_parent("tr")
+    next_tr = tr
+    content_td = None
 
-    # Znajdź komórkę z atrybutem colspan (zawierającą właściwą treść)
-    content_td = next_tr.find("td", attrs={"colspan": True})
+    while next_tr:
+        next_tr = next_tr.find_next_sibling("tr")
+        if not next_tr:
+            break
+        candidate = next_tr.find("td", attrs={"colspan": True})
+        if candidate and candidate.get_text(strip=True):
+            content_td = candidate
+            break
+
     if not content_td:
         return "[Nie znaleziono komórki z treścią raportu]"
 
-    # Pobierz tekst (zachowując nowe linie z <br>)
+    # Konwersja <br> → nowa linia
     text = content_td.get_text(separator="\n", strip=True)
     return text or "[Brak treści w raporcie]"
 
@@ -111,7 +119,7 @@ def scrape_company(symbol: str) -> list[str]:
             f"Treść raportu:\n{report_text}\n"
         )
         results.append(entry)
-        sleep(1.0)  # pauza między raportami, by nie przeciążać serwera
+        sleep(1.0)
 
     if not results:
         return ["Brak komunikatów ESPI/EBI od 1 lipca 2025."]
